@@ -1,37 +1,32 @@
-<svg viewBox="0 0 1040 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nite Framework">
+<svg viewBox="0 0 880 320" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nite Framework">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#1A2050"/>
       <stop offset="1" stop-color="#0A0D24"/>
     </linearGradient>
-    <linearGradient id="moon" x1="0" y1="0" x2="1" y2="1">
+    <linearGradient id="dots" gradientUnits="userSpaceOnUse" x1="0" y1="95" x2="0" y2="225">
       <stop offset="0" stop-color="#F2F4FF"/>
-      <stop offset="1" stop-color="#7C8CF8"/>
+      <stop offset="1" stop-color="#8B9AF8"/>
     </linearGradient>
-    <linearGradient id="node" x1="0" y1="0" x2="0" y2="1">
+    <linearGradient id="stem" gradientUnits="userSpaceOnUse" x1="139" y1="95" x2="241" y2="225">
       <stop offset="0" stop-color="#B7C1FF"/>
       <stop offset="1" stop-color="#6D7FF0"/>
     </linearGradient>
-    <mask id="crescent">
-      <rect width="1040" height="320" fill="black"/>
-      <circle cx="148.75" cy="166.25" r="87.5" fill="white"/>
-      <circle cx="190" cy="137.5" r="78.75" fill="black"/>
-    </mask>
   </defs>
 
+  <!-- badge: Midnight triple-dot column + N mark -->
   <g>
     <rect width="320" height="320" rx="70" fill="url(#bg)"/>
-    <circle cx="160" cy="160" r="116" fill="none" stroke="#4A55A8" stroke-width="4.5" opacity="0.55"/>
-    <g mask="url(#crescent)">
-      <rect width="320" height="320" fill="url(#moon)"/>
-    </g>
-    <circle cx="241.9" cy="78.1" r="12.5" fill="url(#node)"/>
-    <circle cx="59.4" cy="218.1" r="7.5" fill="#4A55A8"/>
-    <path d="M93.75 75 q2.5 13.75 16.25 16.25 q-13.75 2.5 -16.25 16.25 q-2.5 -13.75 -16.25 -16.25 q13.75 -2.5 16.25 -16.25 Z" fill="#DDE3FF" opacity="0.95"/>
+    <rect x="66" y="95" width="27.5" height="27.5" rx="6.25" fill="url(#dots)"/>
+    <rect x="66" y="146.25" width="27.5" height="27.5" rx="6.25" fill="url(#dots)"/>
+    <rect x="66" y="197.5" width="27.5" height="27.5" rx="6.25" fill="url(#dots)"/>
+    <line x1="139" y1="95" x2="139" y2="225" stroke="url(#stem)" stroke-width="27.5" stroke-linecap="round"/>
+    <line x1="241" y1="95" x2="241" y2="225" stroke="url(#stem)" stroke-width="27.5" stroke-linecap="round"/>
+    <line x1="139" y1="95" x2="241" y2="225" stroke="url(#stem)" stroke-width="27.5" stroke-linecap="round"/>
   </g>
 
-  <text x="380" y="196" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
+  <text x="380" y="196" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'DejaVu Sans', sans-serif"
         font-size="150" font-weight="700" letter-spacing="-4" fill="#EEF1FF">nite</text>
-  <text x="380" y="262" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
+  <text x="380" y="262" font-family="'Ubuntu', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
         font-size="52" font-weight="500" letter-spacing="14" fill="#7C8CF8">FRAMEWORK</text>
 </svg>

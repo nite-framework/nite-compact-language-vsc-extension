@@ -4,3 +4,4 @@ out/
 .DS_Store
 test/fixtures/**/out*/
 .claude
+PUBLISHING.md

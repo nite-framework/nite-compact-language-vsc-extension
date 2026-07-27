@@ -1,6 +1,6 @@
 {
   "name": "nite-compact",
-  "displayName": "Nite Compact — Compact Language Server",
+  "displayName": "Nite Compact Language Server",
   "description": "Live compiler-backed diagnostics, completion, symbols, and formatting for the Midnight Compact language. Errors are underlined as you type using `compact compile --skip-zk`.",
   "version": "0.1.1",
   "publisher": "codebigint",

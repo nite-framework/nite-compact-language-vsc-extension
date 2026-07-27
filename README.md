@@ -1,4 +1,4 @@
-# Nite Compact — Compact Language Server for VS Code
+# Nite Compact Language Server for VS Code
 
 Rust-analyzer-style tooling for the [Midnight](https://midnight.network) Compact smart contract language. Instead of waiting for a full build to find out your contract is broken, errors are underlined **as you type**: every keystroke (debounced) runs a real `compact compile --skip-zk` check against a shadow copy of your workspace, so when the squiggles are gone you know the real compile — ZK artifacts and all — will succeed.
 
@@ -60,8 +60,10 @@ Press **F5** in VS Code to launch an Extension Development Host with the extensi
 
 ```bash
 npm run package             # produces nite-compact-<version>.vsix
-code --install-extension nite-compact-0.1.0.vsix
+code --install-extension nite-compact-<version>.vsix
 ```
+
+In-depth docs: [architecture & internals](docs/DEVELOPMENT.md) · [publishing guide](docs/PUBLISHING.md) · [changelog](CHANGELOG.md).
 
 > Tip: disable the legacy `midnightnetwork.compact` extension while this one is enabled — both register the `compact` language and their grammars will compete.
 
@@ -71,4 +73,3 @@ code --install-extension nite-compact-0.1.0.vsix
 - Workspace symbols and rename.
 - Tree-sitter grammar for instant syntax errors without spawning the compiler.
 - Open VSX publication for Cursor/VSCodium/Windsurf.
-# nite-compact-language-vsc-extension
