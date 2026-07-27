@@ -1,0 +1,103 @@
+{
+  "Pragma language version": {
+    "prefix": "pragma",
+    "body": ["pragma language_version ${1:0.23.0};", "$0"],
+    "description": "Declare the Compact language version"
+  },
+  "Import standard library": {
+    "prefix": "importstd",
+    "body": ["import CompactStandardLibrary;", "$0"],
+    "description": "Import the Compact standard library"
+  },
+  "Import module with prefix": {
+    "prefix": "importprefix",
+    "body": ["import \"./${1:modules/MyModule}\" prefix ${2:MyModule}_;", "$0"],
+    "description": "Import a local module with a name prefix"
+  },
+  "Contract skeleton": {
+    "prefix": "contract",
+    "body": [
+      "pragma language_version ${1:0.23.0};",
+      "import CompactStandardLibrary;",
+      "",
+      "export ledger ${2:state}: ${3:Uint<64>};",
+      "",
+      "constructor(${4:}) {",
+      "\t$0",
+      "}",
+      "",
+      "export circuit ${5:action}(): [] {",
+      "\t",
+      "}"
+    ],
+    "description": "Minimal Compact contract skeleton"
+  },
+  "Ledger declaration": {
+    "prefix": "ledger",
+    "body": ["export ledger ${1:name}: ${2:Uint<64>};", "$0"],
+    "description": "Public ledger state declaration"
+  },
+  "Ledger map": {
+    "prefix": "ledgermap",
+    "body": ["export ledger ${1:name}: Map<${2:Bytes<32>}, ${3:Uint<64>}>;", "$0"],
+    "description": "Ledger map declaration"
+  },
+  "Circuit": {
+    "prefix": "circuit",
+    "body": [
+      "export circuit ${1:name}(${2:arg}: ${3:Uint<64>}): ${4:[]} {",
+      "\t$0",
+      "}"
+    ],
+    "description": "Exported circuit"
+  },
+  "Pure circuit": {
+    "prefix": "purecircuit",
+    "body": [
+      "export pure circuit ${1:name}(${2:arg}: ${3:Field}): ${4:Field} {",
+      "\treturn $0;",
+      "}"
+    ],
+    "description": "Exported pure circuit"
+  },
+  "Witness": {
+    "prefix": "witness",
+    "body": ["witness ${1:name}(${2:}): ${3:Bytes<32>};", "$0"],
+    "description": "Witness (private data provider) declaration"
+  },
+  "Module": {
+    "prefix": "module",
+    "body": ["module ${1:Name} {", "\texport circuit ${2:action}(): [] {", "\t\t$0", "\t}", "}"],
+    "description": "Module with an exported circuit"
+  },
+  "Struct": {
+    "prefix": "struct",
+    "body": ["export struct ${1:Name} {", "\t${2:field}: ${3:Uint<64>};", "\t$0", "}"],
+    "description": "Struct declaration"
+  },
+  "Enum": {
+    "prefix": "enum",
+    "body": ["export enum ${1:Name} { ${2:variantA}, ${3:variantB} }", "$0"],
+    "description": "Enum declaration"
+  },
+  "Constructor": {
+    "prefix": "constructor",
+    "body": ["constructor(${1:arg}: ${2:Uint<64>}) {", "\t$0", "}"],
+    "description": "Contract constructor"
+  },
+  "Assert": {
+    "prefix": "assert",
+    "body": ["assert (${1:condition}, \"${2:message}\");", "$0"],
+    "description": "Assertion with failure message"
+  },
+  "Disclose": {
+    "prefix": "disclose",
+    "body": ["disclose(${1:value})"],
+    "description": "Explicitly disclose a witness-derived value"
+  },
+  "For loop": {
+    "prefix": "for",
+    "body": ["for (const ${1:i} of ${2:0}..${3:10}) {", "\t$0", "}"],
+    "description": "Bounded for loop"
+  }
+}

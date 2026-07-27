@@ -1,0 +1,10 @@
+pragma language_version 0.23.0;
+
+import CompactStandardLibrary;
+
+export ledger count: Uint<64>;
+
+export circuit increment(amount: Uint<64>): [] {
+  count = (count + disclose(amount)) as Uint<64>;
+  undefinedFunction(amount);
+}

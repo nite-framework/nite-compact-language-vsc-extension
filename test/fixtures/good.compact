@@ -1,0 +1,9 @@
+pragma language_version 0.23.0;
+import CompactStandardLibrary;
+import "./modules/Math" prefix Math_;
+
+export ledger count: Uint<64>;
+
+export circuit increment(amount: Uint<64>): [] {
+    count = Math_addCapped(count, disclose(amount));
+}

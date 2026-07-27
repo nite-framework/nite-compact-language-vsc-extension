@@ -1,0 +1,130 @@
+{
+  "name": "nite-compact",
+  "displayName": "Nite Compact — Compact Language Server",
+  "description": "Live compiler-backed diagnostics, completion, symbols, and formatting for the Midnight Compact language. Errors are underlined as you type using `compact compile --skip-zk`.",
+  "version": "0.1.1",
+  "publisher": "codebigint",
+  "license": "MIT",
+  "icon": "assets/nite-logo-256.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Formatters",
+    "Snippets"
+  ],
+  "keywords": [
+    "midnight",
+    "compact",
+    "smart contract",
+    "zero knowledge",
+    "language server"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nite-framework/nite-compact-language-vsc-extension.git"
+  },
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "workspaceContains:**/*.compact"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "compact",
+        "aliases": [
+          "Compact",
+          "compact"
+        ],
+        "extensions": [
+          ".compact"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./assets/compact-file-icon-light.svg",
+          "dark": "./assets/compact-file-icon-dark.svg"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "compact",
+        "scopeName": "source.compact",
+        "path": "./syntaxes/compact.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "compact",
+        "path": "./snippets/compact.code-snippets"
+      }
+    ],
+    "configuration": {
+      "title": "Nite Compact",
+      "properties": {
+        "niteCompact.compactPath": {
+          "type": "string",
+          "default": "compact",
+          "description": "Path to the `compact` CLI binary."
+        },
+        "niteCompact.toolchainVersion": {
+          "type": "string",
+          "default": "",
+          "description": "Pin a compiler toolchain version (passed as `+VERSION` to `compact compile`). Leave empty to use the default toolchain."
+        },
+        "niteCompact.compileMode": {
+          "type": "string",
+          "enum": [
+            "onType",
+            "onSave"
+          ],
+          "default": "onType",
+          "description": "When to run the checking compile: as you type (debounced) or only on save."
+        },
+        "niteCompact.debounceMs": {
+          "type": "number",
+          "default": 400,
+          "minimum": 100,
+          "description": "Debounce (ms) before compiling after a keystroke in onType mode."
+        },
+        "niteCompact.maxRootsPerCheck": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "description": "Maximum number of root contracts to compile when a shared module changes."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "niteCompact.restartServer",
+        "title": "Nite Compact: Restart Language Server"
+      },
+      {
+        "command": "niteCompact.checkFile",
+        "title": "Nite Compact: Check Current File Now"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -w -p tsconfig.json",
+    "test": "npm run build && node test/run-pipeline.mjs",
+    "bundle": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --platform=node --format=cjs --sourcemap && esbuild src/server/main.ts --bundle --outfile=out/server/main.js --platform=node --format=cjs --sourcemap",
+    "package": "npm run test && npm run bundle && npx @vscode/vsce package --no-yarn"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1",
+    "vscode-languageserver": "^9.0.1",
+    "vscode-languageserver-textdocument": "^1.0.12",
+    "vscode-uri": "^3.0.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.28.1",
+    "typescript": "^5.6.0"
+  }
+}

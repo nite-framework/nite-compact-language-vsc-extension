@@ -1,0 +1,47 @@
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nite Framework logo">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1A2050"/>
+      <stop offset="1" stop-color="#0A0D24"/>
+    </linearGradient>
+    <linearGradient id="moon" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F2F4FF"/>
+      <stop offset="1" stop-color="#7C8CF8"/>
+    </linearGradient>
+    <linearGradient id="node" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#B7C1FF"/>
+      <stop offset="1" stop-color="#6D7FF0"/>
+    </linearGradient>
+    <mask id="crescent">
+      <rect width="512" height="512" fill="black"/>
+      <circle cx="238" cy="266" r="140" fill="white"/>
+      <circle cx="304" cy="220" r="126" fill="black"/>
+    </mask>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="10" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- badge -->
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <!-- orbit: the framework's packages circling the core -->
+  <circle cx="256" cy="256" r="186" fill="none" stroke="#4A55A8" stroke-width="7" opacity="0.55"/>
+
+  <!-- crescent: the "nite" core -->
+  <g mask="url(#crescent)">
+    <rect width="512" height="512" fill="url(#moon)"/>
+  </g>
+
+  <!-- orbiting package nodes -->
+  <circle cx="387" cy="125" r="20" fill="url(#node)" filter="url(#glow)"/>
+  <circle cx="95" cy="349" r="12" fill="#4A55A8"/>
+
+  <!-- sparkle -->
+  <path d="M150 120 q4 22 26 26 q-22 4 -26 26 q-4 -22 -26 -26 q22 -4 26 -26 Z" fill="#DDE3FF" opacity="0.95"/>
+  <circle cx="366" cy="384" r="5" fill="#8B9AF8" opacity="0.8"/>
+</svg>
