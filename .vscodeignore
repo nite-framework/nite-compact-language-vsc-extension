@@ -8,5 +8,5 @@ tsconfig.json
 .gitignore
 assets/**
 !assets/nite-logo-256.png
-!assets/compact-file-icon-light.svg
-!assets/compact-file-icon-dark.svg
+!assets/compact-file-icon-light.*
+!assets/compact-file-icon-dark.*

@@ -218,7 +218,7 @@ console.log("4. end-to-end with real compiler");
       });
     }
 
-    // bad.compact must yield a located diagnostic at line 8 char 5
+    // bad.compact must yield a located diagnostic on the undefinedFunction call
     {
       const handle = new CompileHandle();
       const entry = path.join(fixtures, "bad.compact");
@@ -230,8 +230,9 @@ console.log("4. end-to-end with real compiler");
       check("broken contract produces located diagnostic", () => {
         const diags = parseCompilerOutput(result.output);
         assert.equal(diags.length, 1, `raw output: ${result.output}`);
-        assert.equal(diags[0].line, 8);
-        assert.equal(diags[0].char, 5);
+        // position of the `undefinedFunction(amount);` call in fixtures/bad.compact
+        assert.equal(diags[0].line, 9);
+        assert.equal(diags[0].char, 3);
         assert.match(diags[0].message, /unbound identifier undefinedFunction/);
       });
     }

@@ -1,7 +1,0 @@
-<svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Compact file (Midnight)">
-  <!-- Midnight mark: ring with a descending column of three squares -->
-  <circle cx="16" cy="16" r="9.6" fill="none" stroke="#0B0B0B" stroke-width="2.2"/>
-  <rect x="14.9" y="9.6" width="2.2" height="2.2" fill="#0B0B0B"/>
-  <rect x="14.9" y="13.1" width="2.2" height="2.2" fill="#0B0B0B"/>
-  <rect x="14.9" y="16.6" width="2.2" height="2.2" fill="#0B0B0B"/>
-</svg>
