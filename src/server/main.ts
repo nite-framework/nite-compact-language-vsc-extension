@@ -17,17 +17,34 @@ import {
   CompletionItem,
   CompletionItemKind,
   CompletionItemTag,
+  DocumentLink,
   Hover,
+  Location,
   MarkupKind,
 } from "vscode-languageserver/node";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { URI } from "vscode-uri";
 import { CompileHandle, probeCompactCli } from "./compiler";
 import { explainDiagnostic, isToolchainFailure, parseCompilerOutput, underlineEnd } from "./diagnostics";
-import { buildImportGraph, findCompileRoots, reachableFiles, resolveImport } from "./imports";
+import {
+  buildImportGraph,
+  findCompileRoots,
+  reachableFiles,
+  resolveImport,
+  scanImportRefs,
+  ImportRef,
+} from "./imports";
 import { ShadowWorkspace } from "./shadow";
-import { extractPrefixedImports, extractSymbols, CompactSymbol } from "./symbols";
+import {
+  extractPrefixedImports,
+  extractSymbols,
+  resolveSymbolAt,
+  CompactSymbol,
+  ResolvedSymbol,
+} from "./symbols";
 import { KEYWORDS, LEDGER_ADTS, PRIMITIVE_TYPES, STDLIB } from "./stdlib";
+import { AdtMethod, findLedgerType, methodsForType, resolveAdt, specialize } from "./ledger-adts";
+import { hasLanguagePragma } from "./pragma";
 import { spawnSync } from "child_process";
 import * as os from "os";
 import * as crypto from "crypto";
@@ -38,6 +55,7 @@ interface Settings {
   compileMode: "onType" | "onSave";
   debounceMs: number;
   maxRootsPerCheck: number;
+  warnMissingPragma: boolean;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -46,6 +64,7 @@ const DEFAULT_SETTINGS: Settings = {
   compileMode: "onType",
   debounceMs: 400,
   maxRootsPerCheck: 4,
+  warnMissingPragma: true,
 };
 
 const connection = createConnection(ProposedFeatures.all);
@@ -75,6 +94,8 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
       documentSymbolProvider: true,
       documentFormattingProvider: true,
       hoverProvider: true,
+      definitionProvider: true,
+      documentLinkProvider: { resolveProvider: false },
     },
   };
 });
@@ -195,8 +216,11 @@ async function runCheck(doc: TextDocument): Promise<void> {
       return;
     }
 
+    const reachable = reachableFiles(graph, root);
     for (const raw of parseCompilerOutput(result.output)) {
-      const realFile = raw.file ? mapCompilerPathToReal(raw.file, root) : root;
+      const realFile = raw.file
+        ? mapCompilerPathToReal(raw.file, root, fileTexts.keys(), reachable)
+        : root;
       const explained = explainDiagnostic(raw);
       const diagnostic = toDiagnostic(raw.line, raw.char, explained.message, realFile, fileTexts.get(realFile));
       if (explained.related.length > 0) {
@@ -218,13 +242,51 @@ async function runCheck(doc: TextDocument): Promise<void> {
   if (generation !== compileGeneration) return;
   activeCompile = null;
 
+  // Lint (not a compiler error): an entry contract with no `pragma
+  // language_version` compiles fine today, but silently accepts whatever
+  // compiler is installed. Modules are exempt — they legitimately omit it.
+  if (settings.warnMissingPragma) {
+    for (const root of roots) {
+      const source = fileTexts.get(root);
+      if (source === undefined || hasLanguagePragma(source)) continue;
+      const bucket = collected.get(root) ?? [];
+      bucket.push({
+        severity: DiagnosticSeverity.Warning,
+        range: Range.create(0, 0, 0, Math.max(1, (source.split(/\r?\n/)[0] ?? "").length)),
+        message:
+          "This contract has no `pragma language_version`, so it compiles against whatever " +
+          "compiler version happens to be installed — a different toolchain may interpret it " +
+          "differently.\nHow to fix: add a version pragma as the first line, e.g. " +
+          "`pragma language_version 0.23;`.\n(Reported by Nite Compact, not the compiler. " +
+          "Disable with `niteCompact.warnMissingPragma`.)",
+        source: "nite-compact",
+      });
+      collected.set(root, bucket);
+    }
+  }
+
   for (const [file, diags] of collected) {
     connection.sendDiagnostics({ uri: URI.file(file).toString(), diagnostics: diags });
   }
 }
 
-/** The compiler prints paths relative to its cwd (the shadow root) or bare basenames. */
-function mapCompilerPathToReal(printed: string, fallbackRoot: string): string {
+/**
+ * Map a path as printed by the compiler back to a real workspace file.
+ *
+ * The compiler prints either a path relative to its cwd (the shadow root) or —
+ * crucially, for an error inside an imported module — just the basename, with
+ * no directory at all. So `modules/Store.compact` is reported as
+ * `Store.compact`, and guessing "next to the root" mis-attributes the error to
+ * the root file. `knownFiles` (every mirrored workspace file) is searched by
+ * basename, preferring files actually reachable from the root being compiled so
+ * that same-named files in unrelated directories do not win.
+ */
+function mapCompilerPathToReal(
+  printed: string,
+  fallbackRoot: string,
+  knownFiles: Iterable<string>,
+  reachable?: ReadonlySet<string>,
+): string {
   if (!shadow) return fallbackRoot;
   const candidates: string[] = [];
   if (path.isAbsolute(printed)) {
@@ -237,9 +299,17 @@ function mapCompilerPathToReal(printed: string, fallbackRoot: string): string {
     const real = shadow.toRealPath(candidate);
     if (real && fs.existsSync(candidate)) return real;
   }
-  // Bare basename: search the fallback root's directory tree.
+
   const base = path.basename(printed);
   if (path.basename(fallbackRoot) === base) return fallbackRoot;
+
+  // Bare basename: resolve against the files this check already knows about.
+  const matches = [...knownFiles].filter((f) => path.basename(f) === base);
+  if (matches.length > 0) {
+    const preferred = reachable ? matches.find((f) => reachable.has(f)) : undefined;
+    return preferred ?? matches[0];
+  }
+
   const nearRoot = path.join(path.dirname(fallbackRoot), base);
   if (fs.existsSync(nearRoot)) return nearRoot;
   return fallbackRoot;
@@ -287,9 +357,74 @@ connection.onNotification("niteCompact/checkFile", (uri: string) => {
 // Completion
 // ---------------------------------------------------------------------------
 
+/**
+ * Read the source of a file referenced by an import, preferring an open
+ * buffer (so unsaved edits are honoured) over the copy on disk.
+ */
+function readImported(fromReal: string, spec: string): string | null {
+  const target = resolveImport(fromReal, spec);
+  const open = documents.all().find((d) => realPathOf(d) === target);
+  if (open) return open.getText();
+  try {
+    return fs.readFileSync(target, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Find the declared type of a ledger field named `receiver`, which may be a
+ * local declaration or an imported one referenced through an import prefix
+ * (e.g. `import "./LedgerStates" prefix LedgerStates_;` makes the field
+ * `admins` visible as `LedgerStates_admins`).
+ */
+function ledgerTypeOf(doc: TextDocument, text: string, receiver: string): string | null {
+  const thisReal = realPathOf(doc);
+  return findLedgerType(text, receiver, (spec) => readImported(thisReal, spec));
+}
+
+/** Build completion items for the operations available on a ledger field. */
+function adtCompletionItems(typeText: string): CompletionItem[] {
+  const { methods, resolved } = methodsForType(typeText);
+  return methods.map((m) => {
+    const signature = resolved ? specialize(m.signature, resolved) : m.signature;
+    const docs = [
+      "```compact",
+      signature,
+      "```",
+      "",
+      m.documentation,
+      m.runtimeOnly ? "\n\n**Not callable inside a circuit.**" : "",
+    ].join("\n");
+    return {
+      label: m.name,
+      kind: CompletionItemKind.Method,
+      detail: signature,
+      documentation: { kind: MarkupKind.Markdown, value: docs },
+      // Sort real in-circuit operations above the ones that cannot be used.
+      sortText: `${m.runtimeOnly || m.deprecated ? "9" : "0"}_${m.name}`,
+      ...(m.deprecated || m.runtimeOnly ? { tags: [CompletionItemTag.Deprecated] } : {}),
+    } satisfies CompletionItem;
+  });
+}
+
 connection.onCompletion((params): CompletionItem[] => {
   const doc = documents.get(params.textDocument.uri);
   if (!doc) return [];
+
+  // Member access: `someLedgerField.` offers only that ADT's operations.
+  const upToCursor = doc.getText({
+    start: { line: params.position.line, character: 0 },
+    end: params.position,
+  });
+  const memberAccess = /([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*[A-Za-z0-9_]*$/.exec(upToCursor);
+  if (memberAccess) {
+    const declaredType = ledgerTypeOf(doc, doc.getText(), memberAccess[1]);
+    if (declaredType) return adtCompletionItems(declaredType);
+    // Unknown receiver: offer nothing rather than a misleading global list.
+    return [];
+  }
+
   const items: CompletionItem[] = [];
 
   for (const kw of KEYWORDS) {
@@ -314,7 +449,12 @@ connection.onCompletion((params): CompletionItem[] => {
   // Symbols from this file.
   const text = doc.getText();
   for (const sym of extractSymbols(text)) {
-    items.push({ label: sym.name, kind: symbolCompletionKind(sym), detail: sym.detail });
+    items.push({
+      label: sym.name,
+      kind: symbolCompletionKind(sym),
+      detail: sym.detail,
+      ...(sym.doc ? { documentation: { kind: MarkupKind.Markdown, value: sym.doc } } : {}),
+    });
   }
 
   // Exported symbols from imported files, honoring `prefix Foo_`.
@@ -334,10 +474,17 @@ connection.onCompletion((params): CompletionItem[] => {
     for (const sym of extractSymbols(importedText)) {
       if (!sym.exported || sym.kind === "module") continue;
       const label = imp.prefix ? `${imp.prefix}${sym.name}` : sym.name;
+      // Carry the module author's doc comment across the import boundary,
+      // noting where the declaration actually lives.
+      const origin = `*Declared in \`${path.basename(target)}\`*`;
       items.push({
         label,
         kind: symbolCompletionKind(sym),
         detail: `${sym.detail}  (${path.basename(target)})`,
+        documentation: {
+          kind: MarkupKind.Markdown,
+          value: sym.doc ? `${sym.doc}\n\n${origin}` : origin,
+        },
       });
     }
   }
@@ -366,6 +513,10 @@ function symbolCompletionKind(sym: CompactSymbol): CompletionItemKind {
       return CompletionItemKind.Struct;
     case "module":
       return CompletionItemKind.Module;
+    case "const":
+      return CompletionItemKind.Constant;
+    case "parameter":
+      return CompletionItemKind.Variable;
   }
 }
 
@@ -378,7 +529,9 @@ connection.onDocumentSymbol((params): DocumentSymbol[] => {
   if (!doc) return [];
   const text = doc.getText();
   const lines = text.split(/\r?\n/);
-  const flat = extractSymbols(text);
+  // Locals and parameters are useful for completion and hover, but they would
+  // swamp the outline, so the document tree keeps only top-level declarations.
+  const flat = extractSymbols(text).filter((s) => s.kind !== "const" && s.kind !== "parameter");
 
   const toDocumentSymbol = (sym: CompactSymbol): DocumentSymbol => {
     const lineText = lines[sym.line] ?? "";
@@ -426,6 +579,10 @@ function symbolDocumentKind(sym: CompactSymbol): SymbolKind {
       return SymbolKind.Module;
     case "constructor":
       return SymbolKind.Constructor;
+    case "const":
+      return SymbolKind.Constant;
+    case "parameter":
+      return SymbolKind.Variable;
   }
 }
 
@@ -433,13 +590,125 @@ function symbolDocumentKind(sym: CompactSymbol): SymbolKind {
 // Hover
 // ---------------------------------------------------------------------------
 
+const KIND_LABEL: Record<CompactSymbol["kind"], string> = {
+  circuit: "circuit",
+  "pure-circuit": "pure circuit",
+  witness: "witness",
+  ledger: "ledger field",
+  struct: "struct",
+  enum: "enum",
+  module: "module",
+  constructor: "constructor",
+  const: "constant",
+  parameter: "parameter",
+};
+
+/**
+ * Render hover markdown for a declaration.
+ *
+ * The type line is only emitted when the source actually declares one. Most
+ * constants in real contracts are unannotated (`const x = f(y);`), and the
+ * extension does not do type inference — so it shows the initializer verbatim
+ * rather than guessing a type it cannot know.
+ */
+function describeSymbol(sym: CompactSymbol, prefixedAs?: string): string {
+  const parts: string[] = ["```compact", sym.detail, "```", ""];
+  // The author's own doc comment leads, above the mechanical details.
+  if (sym.doc) parts.push(sym.doc, "");
+  if (prefixedAs) {
+    // Show the name as it is used here, since the declaration spells it bare.
+    parts.push(`Referenced here as \`${prefixedAs}\`.`, "");
+  }
+  const where = [
+    sym.scope ? `in \`${sym.scope}\`` : "",
+    sym.container ? `module \`${sym.container}\`` : "",
+  ].filter(Boolean).join(", ");
+  parts.push(`*${KIND_LABEL[sym.kind]}${where ? ` — ${where}` : ""}*`);
+
+  if (sym.type) {
+    parts.push("", `**Type:** \`${sym.type}\``);
+    // A ledger field's type determines which operations it offers.
+    if (sym.kind === "ledger") {
+      const resolved = resolveAdt(sym.type);
+      if (resolved) {
+        const ops = resolved.adt.methods
+          .filter((m) => !m.deprecated && !m.runtimeOnly)
+          .map((m) => `\`${m.name}\``)
+          .join(", ");
+        parts.push("", resolved.adt.documentation, "", `**Operations:** ${ops}`);
+      }
+    }
+  } else if (sym.kind === "const" && sym.init) {
+    // No declared type: show what it is bound to, never an inferred type.
+    parts.push("", `**Value:** \`${sym.init}\``);
+  }
+  return parts.join("\n");
+}
+
 connection.onHover((params): Hover | null => {
   const doc = documents.get(params.textDocument.uri);
   if (!doc) return null;
   const text = doc.getText();
-  const offset = doc.offsetAt(params.position);
-  const word = wordAt(text, offset);
-  if (!word) return null;
+
+  // Hovering the import path itself: say where it resolves and what it offers.
+  const importRef = importRefAt(text, params.position.line, params.position.character);
+  if (importRef) {
+    const target = resolveImport(realPathOf(doc), importRef.spec);
+    if (!fs.existsSync(target)) {
+      return {
+        contents: {
+          kind: MarkupKind.Markdown,
+          value: `Cannot resolve \`${importRef.spec}\`.\n\nExpected file: \`${target}\``,
+        },
+      };
+    }
+    const importedText = readFilePreferBuffer(target) ?? "";
+    const exported = extractSymbols(importedText).filter((s) => s.exported && s.kind !== "module");
+    const prefix = extractPrefixedImports(text).find((i) => i.spec === importRef.spec)?.prefix;
+    const lines = [
+      `**${path.basename(target)}**`,
+      "",
+      `[${target}](${URI.file(target).toString()})`,
+    ];
+    if (exported.length > 0) {
+      lines.push("", `Exports ${exported.length} declaration${exported.length === 1 ? "" : "s"}:`, "");
+      for (const s of exported.slice(0, 12)) {
+        lines.push(`- \`${prefix ? prefix + s.name : s.name}\` — ${s.kind}`);
+      }
+      if (exported.length > 12) lines.push(`- …and ${exported.length - 12} more`);
+    }
+    if (prefix) {
+      lines.push("", `Imported under the prefix \`${prefix}\`.`);
+    }
+    return { contents: { kind: MarkupKind.Markdown, value: lines.join("\n") } };
+  }
+
+  const found = wordAt(text, doc.offsetAt(params.position));
+  if (!found) return null;
+  const word = found.word;
+
+  // `field.method` — describe the ADT operation under the cursor. The slice
+  // must end at the START of the word, since the cursor sits inside it.
+  const lineStart = doc.offsetAt({ line: params.position.line, character: 0 });
+  const receiverMatch = /([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*$/.exec(text.slice(lineStart, found.start));
+  if (receiverMatch) {
+    const declaredType = ledgerTypeOf(doc, text, receiverMatch[1]);
+    if (declaredType) {
+      const { methods, resolved } = methodsForType(declaredType);
+      const method = methods.find((m: AdtMethod) => m.name === word);
+      if (method) {
+        const signature = resolved ? specialize(method.signature, resolved) : method.signature;
+        const notes = method.runtimeOnly ? "\n\n**Not callable inside a circuit.**" : "";
+        const legacy = method.deprecated ? `\n\n**Deprecated** — use \`${method.deprecated}\`.` : "";
+        return {
+          contents: {
+            kind: MarkupKind.Markdown,
+            value: `\`\`\`compact\n${signature}\n\`\`\`\nOperation on \`${declaredType}\`\n\n${method.documentation}${notes}${legacy}`,
+          },
+        };
+      }
+    }
+  }
 
   const std = STDLIB.find((e) => e.name === word);
   if (std) {
@@ -451,19 +720,28 @@ connection.onHover((params): Hover | null => {
     };
   }
 
-  const sym = extractSymbols(text).find((s) => s.name === word);
-  if (sym) {
-    return {
-      contents: {
-        kind: MarkupKind.Markdown,
-        value: `\`\`\`compact\n${sym.detail}\n\`\`\`\n*${sym.kind}${sym.container ? ` in module ${sym.container}` : ""}*`,
-      },
-    };
+  // Local declaration, or one reached through an import prefix.
+  const resolved = resolveDeclaration(doc, text, word, params.position.line);
+  if (resolved) {
+    let value = describeSymbol(resolved.symbol, resolved.prefix ? word : undefined);
+    if (resolved.spec) {
+      const target = declarationPath(doc, resolved);
+      const link = `${URI.file(target).toString()}#L${resolved.symbol.line + 1}`;
+      value +=
+        `\n\n---\n\nImported from [\`${path.basename(target)}\`](${link}) ` +
+        `via \`import "${resolved.spec}"${resolved.prefix ? ` prefix ${resolved.prefix}` : ""};\``;
+    }
+    return { contents: { kind: MarkupKind.Markdown, value } };
   }
   return null;
 });
 
-function wordAt(text: string, offset: number): string | null {
+/**
+ * The identifier surrounding `offset`, with its bounds. The bounds matter:
+ * hovering lands anywhere inside a word, so callers that need the text before
+ * the word (to spot a `receiver.` prefix) must use `start`, not the cursor.
+ */
+function wordAt(text: string, offset: number): { word: string; start: number; end: number } | null {
   let start = offset;
   let end = offset;
   const isWord = (c: string): boolean => /[A-Za-z0-9_]/.test(c);
@@ -471,8 +749,95 @@ function wordAt(text: string, offset: number): string | null {
   while (end < text.length && isWord(text[end])) end++;
   if (start === end) return null;
   const word = text.slice(start, end);
-  return /^[A-Za-z_]/.test(word) ? word : null;
+  return /^[A-Za-z_]/.test(word) ? { word, start, end } : null;
 }
+
+/** Read a file, preferring an open buffer so unsaved edits are honoured. */
+function readFilePreferBuffer(absPath: string): string | null {
+  const open = documents.all().find((d) => realPathOf(d) === absPath);
+  if (open) return open.getText();
+  try {
+    return fs.readFileSync(absPath, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+/** Resolve an identifier to its declaration, following prefixed imports. */
+function resolveDeclaration(doc: TextDocument, text: string, word: string, nearLine: number): ResolvedSymbol | null {
+  const thisReal = realPathOf(doc);
+  return resolveSymbolAt(text, word, (spec) => readImported(thisReal, spec), nearLine);
+}
+
+/** Absolute path of a resolved declaration: the import target, or this file. */
+function declarationPath(doc: TextDocument, resolved: ResolvedSymbol): string {
+  const thisReal = realPathOf(doc);
+  return resolved.spec ? resolveImport(thisReal, resolved.spec) : thisReal;
+}
+
+/**
+ * Locate a declaration precisely: the symbol carries its line, so find the
+ * name within that line to produce a range the editor can highlight.
+ */
+function locationOf(absPath: string, sym: CompactSymbol): Location {
+  const source = readFilePreferBuffer(absPath) ?? "";
+  const lineText = source.split(/\r?\n/)[sym.line] ?? "";
+  const col = Math.max(0, lineText.indexOf(sym.name));
+  return {
+    uri: URI.file(absPath).toString(),
+    range: Range.create(sym.line, col, sym.line, col + sym.name.length),
+  };
+}
+
+/** The import specifier the position sits inside, if any. */
+function importRefAt(text: string, line: number, character: number): ImportRef | undefined {
+  return scanImportRefs(text).find(
+    (ref) => ref.line === line && character >= ref.startChar && character <= ref.endChar,
+  );
+}
+
+/**
+ * Make `import "./modules/Store"` specifiers clickable, pointing at the file
+ * they resolve to. Links are only offered for files that exist, so a typo does
+ * not produce a link that goes nowhere.
+ */
+connection.onDocumentLinks((params): DocumentLink[] => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return [];
+  const thisReal = realPathOf(doc);
+  const links: DocumentLink[] = [];
+  for (const ref of scanImportRefs(doc.getText())) {
+    const target = resolveImport(thisReal, ref.spec);
+    if (!fs.existsSync(target)) continue;
+    links.push({
+      range: Range.create(ref.line, ref.startChar, ref.line, ref.endChar),
+      target: URI.file(target).toString(),
+      tooltip: `Open ${path.basename(target)}`,
+    });
+  }
+  return links;
+});
+
+connection.onDefinition((params): Location | null => {
+  const doc = documents.get(params.textDocument.uri);
+  if (!doc) return null;
+  const text = doc.getText();
+
+  // On an import specifier, jump to the top of the imported file.
+  const ref = importRefAt(text, params.position.line, params.position.character);
+  if (ref) {
+    const target = resolveImport(realPathOf(doc), ref.spec);
+    if (!fs.existsSync(target)) return null;
+    return { uri: URI.file(target).toString(), range: Range.create(0, 0, 0, 0) };
+  }
+
+  const found = wordAt(text, doc.offsetAt(params.position));
+  if (!found) return null;
+
+  const resolved = resolveDeclaration(doc, text, found.word, params.position.line);
+  if (!resolved) return null;
+  return locationOf(declarationPath(doc, resolved), resolved.symbol);
+});
 
 // ---------------------------------------------------------------------------
 // Formatting (via `compact format`)

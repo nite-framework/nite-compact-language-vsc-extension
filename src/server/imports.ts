@@ -21,6 +21,35 @@ export function scanImportSpecifiers(text: string): string[] {
   return specs;
 }
 
+export interface ImportRef {
+  spec: string;
+  /** 0-based line of the statement. */
+  line: number;
+  /** 0-based column of the first character inside the quotes. */
+  startChar: number;
+  /** 0-based column just past the last character inside the quotes. */
+  endChar: number;
+}
+
+/**
+ * Locate every file-referencing import/include with its position, so the
+ * specifier can be turned into a clickable link to the imported file.
+ */
+export function scanImportRefs(text: string): ImportRef[] {
+  const refs: ImportRef[] = [];
+  const lines = text.split(/\r?\n/);
+  for (let line = 0; line < lines.length; line++) {
+    const re = /\b(?:import|include)\s+"([^"]+)"/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(lines[line])) !== null) {
+      // Offset past the opening quote to cover only the path itself.
+      const startChar = m.index + m[0].lastIndexOf('"' + m[1]) + 1;
+      refs.push({ spec: m[1], line, startChar, endChar: startChar + m[1].length });
+    }
+  }
+  return refs;
+}
+
 /** Resolve an import specifier to an absolute .compact path. */
 export function resolveImport(fromFile: string, spec: string): string {
   const withExt = spec.endsWith(".compact") ? spec : `${spec}.compact`;

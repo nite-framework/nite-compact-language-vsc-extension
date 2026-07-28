@@ -32,16 +32,27 @@ npx @vscode/vsce login codebigint
 # paste the PAT when prompted
 ```
 
-### 1.3 Open VSX account (optional but recommended)
+### 1.3 Open VSX account — the no-Microsoft-account path
 
-1. Sign in at <https://open-vsx.org> with GitHub.
-2. Sign the Eclipse publisher agreement (linked from your profile page).
-3. Create an access token: profile → **Access Tokens** → **Generate New Token**.
-4. The namespace must match the publisher ID:
+Open VSX is the registry Cursor, VSCodium, Windsurf, Gitpod, and Theia install from. It needs **only a GitHub login** — no Microsoft account, no Azure subscription, no credit card. If the Azure DevOps signup wall is blocking the VS Code Marketplace, publish here first; it is a completely independent registry.
+
+**Step 1 — Log in with GitHub.** Go to <https://open-vsx.org> and click **Log in** (top right), then authorize with GitHub.
+
+**Step 2 — Create an Eclipse Foundation account.** Register at <https://accounts.eclipse.org/user/register>. Use the same email as your GitHub account where possible.
+
+**Step 3 — Link GitHub to Eclipse (the step everyone misses).** In your Eclipse account profile, find the **GitHub Username** field and set it to your exact GitHub login (`codeBigInt`). Open VSX matches your Eclipse identity to your GitHub identity *through this field only* — if it is blank or misspelled, the signed agreement will not be recognized and publishing fails with a "must sign the Publisher Agreement" error even though you signed it.
+
+**Step 4 — Sign the Publisher Agreement.** Back on <https://open-vsx.org>, open your avatar menu → **Profile**. It will prompt you to sign the Eclipse Publisher Agreement. Sign it. This is mandatory and one-time.
+
+**Step 5 — Create an access token.** Avatar menu → **Settings** → **Access Tokens** → **Generate New Token**. Give it a description, then copy the token immediately — it is shown once.
+
+**Step 6 — Claim the namespace.** The namespace must exactly match the `publisher` field in package.json (`codebigint`):
 
 ```bash
 npx ovsx create-namespace codebigint -p <OPEN_VSX_TOKEN>
 ```
+
+> Newly created namespaces are **unverified**, so the listing shows a "not verified" notice. That is cosmetic and does not block publishing or installing. To remove it, open a namespace-ownership request at <https://github.com/EclipseFdn/open-vsx.org/issues> once your extension is live.
 
 ---
 
@@ -102,6 +113,17 @@ Publish the *same* vsix so both stores carry identical bits:
 ```bash
 npx ovsx publish nite-compact-<version>.vsix -p <OPEN_VSX_TOKEN>
 ```
+
+Verify at `https://open-vsx.org/extension/codebigint/nite-compact`. Users on Cursor/VSCodium/Windsurf can then find it in their in-editor Extensions search.
+
+Common `ovsx publish` failures:
+
+| Error | Cause |
+| --- | --- |
+| `You must sign a Publisher Agreement` | Eclipse account exists but its **GitHub Username** field is empty or doesn't match your GitHub login (§1.3 step 3). |
+| `Unknown namespace: codebigint` | `create-namespace` was never run, or the namespace doesn't match `publisher` in package.json. |
+| `Insufficient access rights for namespace` | The token belongs to a different account than the one that created the namespace. |
+| `Extension version already published` | Open VSX, like the Marketplace, refuses to overwrite a version — bump and repackage. |
 
 ---
 

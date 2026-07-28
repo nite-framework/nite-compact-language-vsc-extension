@@ -1,0 +1,26 @@
+/**
+ * Ledger state in a module, imported elsewhere with a prefix — the structure
+ * real contracts use (`import "./modules/Store" prefix Store_;`). Exercises
+ * cross-file resolution of ADT member completion: `Store_balances.` must offer
+ * Map operations even though the declaration lives in this file.
+ */
+module Store {
+    import CompactStandardLibrary;
+
+    /** Plain typed field: a cell, so read() / write() / resetToDefault(). */
+    export ledger totalSupply: Uint<64>;
+
+    /** Counter ADT: read / increment / decrement / resetToDefault. */
+    export ledger mintCounter: Counter;
+
+    /** Set ADT: member / insert / remove / size / isEmpty. */
+    export ledger admins: Set<Bytes<32>>;
+
+    /** Map ADT: member / insert / lookup / remove / insertDefault / size. */
+    export ledger balances: Map<Bytes<32>, Uint<64>>;
+    /** List ADT: length / isEmpty / head / pushFront / popFront. */
+    export ledger recentAmounts: List<Uint<64>>;
+    /** Merkle trees: insert / insertHash / insertHashIndex / checkRoot / isFull. */
+    export ledger commitments: MerkleTree<10, Bytes<32>>;
+    export ledger history: HistoricMerkleTree<10, Bytes<32>>;
+}

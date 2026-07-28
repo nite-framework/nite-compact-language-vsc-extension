@@ -1,9 +1,52 @@
 pragma language_version 0.23.0;
 import CompactStandardLibrary;
 import "./modules/Math" prefix Math_;
+import "./modules/Store" prefix Store_;
 
+/** Struct used as a Map value, so `lookup` returns a struct rather than a scalar. */
+export struct Account {
+    owner: Bytes<32>;
+    balance: Uint<64>;
+}
+
+/** Plain typed ledger field — a cell: read() / write() / resetToDefault(). */
 export ledger count: Uint<64>;
+/** Map ADT keyed by hash with a struct value type. */
+export ledger accounts: Map<Bytes<32>, Account>;
+
+/** Set ADT, for membership checks. */
+export ledger seen: Set<Bytes<32>>;
 
 export circuit increment(amount: Uint<64>): [] {
     count = Math_addCapped(count, disclose(amount));
+}
+
+/**
+ * Exercises parameters, an unannotated constant (the common case — hover shows
+ * its initializer, never an invented type) and an annotated one (hover shows
+ * the declared type), plus ADT operations on both local and imported fields.
+ */
+export circuit register(owner: Bytes<32>, opening: Uint<64>): [] {
+    const key = disclose(owner);
+    const startingBalance: Uint<64> = disclose(opening);
+
+    assert(!accounts.member(key), "account already registered");
+    accounts.insert(key, Account { owner: key, balance: startingBalance });
+    seen.insert(key);
+
+    Store_admins.insert(key);
+    Store_balances.insert(key, startingBalance);
+    Store_mintCounter.increment(1);
+    Store_recentAmounts.pushFront(startingBalance);
+    Store_commitments.insertHash(key);
+    Store_history.insertHash(key);
+    Store_totalSupply = Math_addCapped(Store_totalSupply, startingBalance);
+}
+
+/** Reads back through the ADTs: lookup returns the struct, size/isEmpty are scalars. */
+export circuit balanceOf(owner: Bytes<32>): Uint<64> {
+    const key = disclose(owner);
+    assert(accounts.member(key), "unknown account");
+    const account = accounts.lookup(key);
+    return account.balance;
 }

@@ -21,8 +21,11 @@ export const PRIMITIVE_TYPES: string[] = [
   "Vector", "Void",
 ];
 
+// Verified against compiler 0.31.1: `Cell` is NOT a ledger type — declaring
+// `ledger x: Cell<Uint<64>>;` fails with "unbound identifier Cell". A plain
+// typed field (`ledger x: Uint<64>;`) is the cell. See ledger-adts.ts.
 export const LEDGER_ADTS: string[] = [
-  "Counter", "Cell", "Set", "List", "Map", "MerkleTree", "HistoricMerkleTree",
+  "Counter", "Set", "List", "Map", "MerkleTree", "HistoricMerkleTree",
   "Kernel",
 ];
 

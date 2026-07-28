@@ -2,7 +2,7 @@
   "name": "nite-compact",
   "displayName": "Nite Compact Language Server",
   "description": "Live compiler-backed diagnostics, completion, symbols, and formatting for the Midnight Compact language. Errors are underlined as you type using `compact compile --skip-zk`.",
-  "version": "0.1.8",
+  "version": "0.2.0",
   "publisher": "codebigint",
   "license": "MIT",
   "icon": "assets/nite-logo-256.png",
@@ -94,6 +94,11 @@
           "default": 4,
           "minimum": 1,
           "description": "Maximum number of root contracts to compile when a shared module changes."
+        },
+        "niteCompact.warnMissingPragma": {
+          "type": "boolean",
+          "default": true,
+          "description": "Warn when an entry contract has no `pragma language_version`. The compiler accepts its absence, but the file then compiles against whatever toolchain is installed. Imported modules are exempt."
         }
       }
     },
