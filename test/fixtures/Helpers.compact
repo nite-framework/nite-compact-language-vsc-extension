@@ -1,0 +1,16 @@
+/**
+ * A module deliberately placed OUTSIDE any `modules` directory, next to the
+ * entry contract. Modules resolve from anywhere — the `modules/` layout is a
+ * convention, not a requirement — so this file exercises:
+ *   - a module file with no `pragma` that must NOT be warned about;
+ *   - resolution of a bare `import Helpers prefix Helpers_;` from a module that
+ *     lives in a different directory (modules/Store.compact imports this).
+ */
+module Helpers {
+    import CompactStandardLibrary;
+
+    /** Caps a value at an upper bound, returning the smaller of the two. */
+    export pure circuit clamp(value: Uint<64>, upper: Uint<64>): Uint<64> {
+        return value > upper ? upper : value;
+    }
+}

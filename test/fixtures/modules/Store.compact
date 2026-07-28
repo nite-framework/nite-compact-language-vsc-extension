@@ -6,6 +6,10 @@
  */
 module Store {
     import CompactStandardLibrary;
+    // Module-to-module import by bare NAME rather than path. The compiler
+    // resolves this as a sibling file lookup (`Math.compact` next to this
+    // file), which is why it names a module in the same directory.
+    import Math prefix Math_;
 
     /** Plain typed field: a cell, so read() / write() / resetToDefault(). */
     export ledger totalSupply: Uint<64>;

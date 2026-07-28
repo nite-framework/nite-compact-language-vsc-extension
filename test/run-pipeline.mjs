@@ -13,11 +13,14 @@ const here = path.dirname(url.fileURLToPath(import.meta.url));
 const out = (p) => path.join(here, "..", "out", "server", p);
 
 const { ShadowWorkspace } = await import(url.pathToFileURL(out("shadow.js")));
-const { buildImportGraph, findCompileRoots, reachableFiles, resolveImport, scanImportRefs } = await import(url.pathToFileURL(out("imports.js")));
+const {
+  buildImportGraph, findCompileRoots, reachableFiles, resolveImport,
+  scanImportRefs, scanImportSpecifiers, resolveModuleName, isInModulesDir,
+} = await import(url.pathToFileURL(out("imports.js")));
 const { CompileHandle, probeCompactCli } = await import(url.pathToFileURL(out("compiler.js")));
 const { parseCompilerOutput, underlineEnd, explainDiagnostic } = await import(url.pathToFileURL(out("diagnostics.js")));
 const { extractSymbols, extractPrefixedImports, resolveSymbolAt, docCommentAbove } = await import(url.pathToFileURL(out("symbols.js")));
-const { hasLanguagePragma } = await import(url.pathToFileURL(out("pragma.js")));
+const { hasLanguagePragma, isModuleFile } = await import(url.pathToFileURL(out("pragma.js")));
 const {
   LEDGER_ADTS: LEDGER_ADT_TABLE,
   findLedgerType,
@@ -175,9 +178,11 @@ console.log("2. symbols + imports");
   });
   check("prefixed imports parsed", () => {
     const imps = extractPrefixedImports(goodText);
+    // Line order; both import forms appear, and the standard library is omitted.
     assert.deepEqual(imps, [
-      { spec: "./modules/Math", prefix: "Math_" },
-      { spec: "./modules/Store", prefix: "Store_" },
+      { spec: "./modules/Math", prefix: "Math_", kind: "file" },
+      { spec: "Helpers", prefix: "Helpers_", kind: "module" },
+      { spec: "./modules/Store", prefix: "Store_", kind: "file" },
     ]);
   });
 }
@@ -463,7 +468,7 @@ console.log("6d. compiler path reporting for errors inside modules");
     fs.rmSync(scratch, { recursive: true, force: true });
     fs.mkdirSync(path.join(scratch, "modules"), { recursive: true });
     fs.mkdirSync(path.join(scratch, "out"), { recursive: true });
-    for (const rel of ["good.compact", "modules/Math.compact", "modules/Store.compact"]) {
+    for (const rel of ["good.compact", "Helpers.compact", "modules/Math.compact", "modules/Store.compact"]) {
       fs.copyFileSync(path.join(fixtures, rel), path.join(scratch, rel));
     }
     // Break the module: drop a trailing semicolon.
@@ -566,7 +571,8 @@ console.log("6f. doc comments attached to declarations");
 console.log("6g. import statements locate their target files");
 {
   const goodSrc = fs.readFileSync(path.join(fixtures, "good.compact"), "utf8");
-  const refs = scanImportRefs(goodSrc);
+  // scanImportRefs reports every import, including bare ones; callers filter.
+  const refs = scanImportRefs(goodSrc).filter((r) => r.kind === "file");
 
   check("finds every file-referencing import", () => {
     assert.deepEqual(refs.map((r) => r.spec), ["./modules/Math", "./modules/Store"]);
@@ -586,11 +592,14 @@ console.log("6g. import statements locate their target files");
       assert.ok(fs.existsSync(target), `${ref.spec} -> ${target} should exist`);
     }
   });
-  check("bare library imports are not treated as file links", () => {
-    assert.deepEqual(scanImportRefs("import CompactStandardLibrary;\n"), []);
+  check("bare library imports are flagged as built-ins, never linked", () => {
+    const [lib] = scanImportRefs("import CompactStandardLibrary;\n");
+    assert.equal(lib.kind, "module");
+    assert.equal(lib.builtin, true, "must be marked built-in so no file link is offered");
+    assert.deepEqual(scanImportSpecifiers("import CompactStandardLibrary;\n"), []);
   });
   check("include statements are linked too", () => {
-    const r = scanImportRefs('include "./other";');
+    const r = scanImportRefs('include "./other";').filter((x) => x.kind === "file");
     assert.equal(r.length, 1);
     assert.equal(r[0].spec, "./other");
   });
@@ -635,6 +644,140 @@ console.log("6e. missing language pragma");
     });
     fs.rmSync(dir, { recursive: true, force: true });
   }
+}
+
+console.log("6h. bare module imports (import Utils prefix Utils_;)");
+{
+  const flat = "/proj/main.compact";
+  const sibling = "/proj/Utils.compact";
+  const nested = "/proj/modules/CustomStructs.compact";
+  const known = [flat, sibling, nested];
+
+  check("scans both quoted and bare import forms", () => {
+    const refs = scanImportRefs(
+      'import CompactStandardLibrary;\nimport "./modules/Store" prefix Store_;\nimport CustomStructs prefix CustomStructs_;\n',
+    );
+    // Reported in line order.
+    assert.deepEqual(
+      refs.map((r) => [r.spec, r.kind, r.prefix, r.builtin]),
+      [
+        ["CompactStandardLibrary", "module", null, true],
+        ["./modules/Store", "file", "Store_", false],
+        ["CustomStructs", "module", "CustomStructs_", false],
+      ],
+    );
+  });
+  check("the standard library is never treated as a workspace file", () => {
+    assert.deepEqual(scanImportSpecifiers("import CompactStandardLibrary;\n"), []);
+    assert.equal(resolveModuleName(flat, "CompactStandardLibrary", known), null);
+  });
+  check("bare name resolves to a sibling file", () => {
+    assert.equal(resolveModuleName(flat, "Utils", known), sibling);
+  });
+  check("bare name resolves into a modules/ subdirectory", () => {
+    assert.equal(resolveModuleName(flat, "CustomStructs", known), nested);
+  });
+  check("a module resolves a sibling inside the same modules/ dir", () => {
+    const a = "/proj/modules/A.compact";
+    const b = "/proj/modules/B.compact";
+    assert.equal(resolveModuleName(a, "B", [a, b]), b);
+  });
+  check("falls back to a declaring file when the name does not match the filename", () => {
+    const odd = "/proj/deep/nested/whatever.compact";
+    const resolved = resolveModuleName(flat, "Hidden", [flat, odd], (f) =>
+      f === odd ? "module Hidden {\n  export circuit x(): [] { }\n}\n" : "",
+    );
+    assert.equal(resolved, odd);
+  });
+  check("unresolvable names return null rather than inventing a path", () => {
+    assert.equal(resolveModuleName(flat, "NoSuchModule", known, () => ""), null);
+  });
+
+  check("bare imports create real graph edges, so the module is not a root", () => {
+    const files = new Map([
+      [flat, "pragma language_version 0.23;\nimport CompactStandardLibrary;\nimport Utils prefix Utils_;\n"],
+      [sibling, "module Utils {\n  export pure circuit double(x: Uint<64>): Uint<64> { return x; }\n}\n"],
+    ]);
+    const g = buildImportGraph(files);
+    assert.deepEqual(findCompileRoots(g, sibling, 4), [flat], "editing the module must compile the contract");
+    assert.ok(reachableFiles(g, flat).has(sibling));
+  });
+
+  check("modules/ layout is detected for the convention hint", () => {
+    assert.equal(isInModulesDir(nested), true);
+    assert.equal(isInModulesDir(sibling), false);
+  });
+}
+
+console.log("6h2. fixture layout: module outside modules/, and module-to-module imports");
+{
+  const files = new Map();
+  for (const rel of ["good.compact", "Helpers.compact", "modules/Math.compact", "modules/Store.compact"]) {
+    files.set(path.join(fixtures, rel), fs.readFileSync(path.join(fixtures, rel), "utf8"));
+  }
+  const graph = buildImportGraph(files);
+  const good = path.join(fixtures, "good.compact");
+  const helpers = path.join(fixtures, "Helpers.compact");
+  const store = path.join(fixtures, "modules", "Store.compact");
+  const math = path.join(fixtures, "modules", "Math.compact");
+
+  check("a module outside modules/ is still linked to its contract", () => {
+    assert.equal(isInModulesDir(helpers), false, "fixture must live outside modules/");
+    assert.deepEqual(findCompileRoots(graph, helpers, 4), [good]);
+  });
+  check("module-to-module bare import creates an edge (Store -> Math)", () => {
+    assert.ok(graph.imports.get(store)?.has(math), "Store must import Math by bare name");
+    assert.ok(graph.importers.get(math)?.has(store));
+  });
+  check("editing a module imported only by another module still compiles the contract", () => {
+    assert.deepEqual(findCompileRoots(graph, math, 4), [good]);
+  });
+  check("everything is reachable from the entry contract", () => {
+    const reach = reachableFiles(graph, good);
+    for (const f of [helpers, store, math]) assert.ok(reach.has(f), `${path.basename(f)} unreachable`);
+  });
+  check("no module file would be warned about a missing pragma", () => {
+    for (const f of [helpers, store, math]) {
+      assert.equal(hasLanguagePragma(files.get(f)), false, `${path.basename(f)} has no pragma`);
+      assert.equal(isModuleFile(files.get(f)), true, `${path.basename(f)} must be exempt`);
+    }
+  });
+  check("symbols resolve across a module declared outside modules/", () => {
+    const r = resolveSymbolAt(files.get(good), "Helpers_clamp", (spec) =>
+      spec.endsWith("Helpers") ? files.get(helpers) : null,
+    );
+    assert.equal(r.symbol.name, "clamp");
+    assert.equal(r.symbol.container, "Helpers");
+    assert.match(r.symbol.doc, /Caps a value/);
+  });
+  check("bare module name resolves from a sibling module file", () => {
+    assert.equal(resolveModuleName(store, "Math", [...files.keys()]), math);
+  });
+}
+
+console.log("6i. module files are exempt from the pragma warning");
+{
+  const moduleSrc = fs.readFileSync(path.join(fixtures, "modules", "Store.compact"), "utf8");
+  const contractSrc = fs.readFileSync(path.join(fixtures, "good.compact"), "utf8");
+
+  check("a module file is recognised by content, not location", () => {
+    assert.equal(isModuleFile(moduleSrc), true);
+    assert.equal(isModuleFile(contractSrc), false);
+  });
+  check("a module with imports before it is still a module", () => {
+    const src = "import CompactStandardLibrary;\nimport Utils prefix Utils_;\n\nmodule Store {\n  export ledger a: Counter;\n}\n";
+    assert.equal(isModuleFile(src), true);
+  });
+  check("a file with any top-level contract declaration is not a module", () => {
+    assert.equal(isModuleFile("module M { }\nexport ledger stray: Counter;\n"), false);
+    assert.equal(isModuleFile("export circuit main(): [] { }\n"), false);
+  });
+  check("doc comments above a module do not confuse detection", () => {
+    assert.equal(isModuleFile("/** Docs. */\nmodule M {\n  export ledger a: Counter;\n}\n"), true);
+  });
+  check("an empty or comment-only file is not treated as a module", () => {
+    assert.equal(isModuleFile("// nothing here\n"), false);
+  });
 }
 
 console.log("7. ADT table vs the real compiler (anti-hallucination guard)");

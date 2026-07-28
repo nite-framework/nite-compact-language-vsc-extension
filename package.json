@@ -98,7 +98,12 @@
         "niteCompact.warnMissingPragma": {
           "type": "boolean",
           "default": true,
-          "description": "Warn when an entry contract has no `pragma language_version`. The compiler accepts its absence, but the file then compiles against whatever toolchain is installed. Imported modules are exempt."
+          "description": "Warn when an entry contract has no `pragma language_version`. The compiler accepts its absence, but the file then compiles against whatever toolchain is installed. Module files are exempt."
+        },
+        "niteCompact.suggestModulesDir": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a hint when a file defining a module is not inside a `modules` directory. Modules resolve correctly from any location; this is a layout convention only."
         }
       }
     },

@@ -1,6 +1,9 @@
 pragma language_version 0.23.0;
 import CompactStandardLibrary;
 import "./modules/Math" prefix Math_;
+// A module OUTSIDE any `modules` directory, imported by bare NAME rather than
+// path — Compact allows both forms, and both must resolve.
+import Helpers prefix Helpers_;
 import "./modules/Store" prefix Store_;
 
 /** Struct used as a Map value, so `lookup` returns a struct rather than a scalar. */
@@ -48,5 +51,6 @@ export circuit balanceOf(owner: Bytes<32>): Uint<64> {
     const key = disclose(owner);
     assert(accounts.member(key), "unknown account");
     const account = accounts.lookup(key);
-    return account.balance;
+    // Uses the module declared outside `modules/`.
+    return Helpers_clamp(account.balance, 1000);
 }

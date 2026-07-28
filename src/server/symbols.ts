@@ -205,6 +205,8 @@ export function extractSymbols(text: string): CompactSymbol[] {
   return symbols;
 }
 
+import { scanImportRefs } from "./imports";
+
 export interface ResolvedSymbol {
   symbol: CompactSymbol;
   /** Import specifier the declaration came from; null when declared locally. */
@@ -310,12 +312,18 @@ export function extractParameters(declLine: string): CompactSymbol[] {
   return params;
 }
 
-/** Parse `import "./x" prefix Foo_;` statements: specifier + optional prefix. */
-export function extractPrefixedImports(text: string): Array<{ spec: string; prefix: string | null }> {
-  const results: Array<{ spec: string; prefix: string | null }> = [];
-  const re = /\bimport\s+"([^"]+)"(?:\s+prefix\s+([A-Za-z_][A-Za-z0-9_]*))?/g;
-  for (const m of text.matchAll(re)) {
-    results.push({ spec: m[1], prefix: m[2] ?? null });
-  }
-  return results;
+/**
+ * Parse import statements: specifier plus optional prefix.
+ *
+ * Covers BOTH forms, because both can name workspace files:
+ *   import "./modules/Utils" prefix Utils_;   -> kind "file"
+ *   import CustomStructs prefix CustomStructs_;  -> kind "module"
+ * Compiler built-ins (CompactStandardLibrary) are excluded — they have no file.
+ */
+export function extractPrefixedImports(
+  text: string,
+): Array<{ spec: string; prefix: string | null; kind: "file" | "module" }> {
+  return scanImportRefs(text)
+    .filter((ref) => !ref.builtin)
+    .map((ref) => ({ spec: ref.spec, prefix: ref.prefix, kind: ref.kind }));
 }

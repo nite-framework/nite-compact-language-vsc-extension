@@ -4,6 +4,7 @@ import {
   createConnection,
   Diagnostic,
   DiagnosticSeverity,
+  DiagnosticTag,
   DidChangeConfigurationNotification,
   DocumentSymbol,
   InitializeParams,
@@ -31,6 +32,8 @@ import {
   findCompileRoots,
   reachableFiles,
   resolveImport,
+  resolveModuleName,
+  isInModulesDir,
   scanImportRefs,
   ImportRef,
 } from "./imports";
@@ -44,7 +47,7 @@ import {
 } from "./symbols";
 import { KEYWORDS, LEDGER_ADTS, PRIMITIVE_TYPES, STDLIB } from "./stdlib";
 import { AdtMethod, findLedgerType, methodsForType, resolveAdt, specialize } from "./ledger-adts";
-import { hasLanguagePragma } from "./pragma";
+import { hasLanguagePragma, isModuleFile } from "./pragma";
 import { spawnSync } from "child_process";
 import * as os from "os";
 import * as crypto from "crypto";
@@ -56,6 +59,7 @@ interface Settings {
   debounceMs: number;
   maxRootsPerCheck: number;
   warnMissingPragma: boolean;
+  suggestModulesDir: boolean;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -65,6 +69,7 @@ const DEFAULT_SETTINGS: Settings = {
   debounceMs: 400,
   maxRootsPerCheck: 4,
   warnMissingPragma: true,
+  suggestModulesDir: true,
 };
 
 const connection = createConnection(ProposedFeatures.all);
@@ -249,6 +254,10 @@ async function runCheck(doc: TextDocument): Promise<void> {
     for (const root of roots) {
       const source = fileTexts.get(root);
       if (source === undefined || hasLanguagePragma(source)) continue;
+      // Module files legitimately have no pragma. This is decided by content,
+      // so a module is exempt wherever it lives — and even when nothing has
+      // been found importing it yet.
+      if (isModuleFile(source)) continue;
       const bucket = collected.get(root) ?? [];
       bucket.push({
         severity: DiagnosticSeverity.Warning,
@@ -262,6 +271,29 @@ async function runCheck(doc: TextDocument): Promise<void> {
         source: "nite-compact",
       });
       collected.set(root, bucket);
+    }
+  }
+
+  // Convention hint: modules resolve from anywhere, but a `modules/` directory
+  // keeps a project predictable. Informational only — never an error, and it
+  // never affects resolution.
+  if (settings.suggestModulesDir) {
+    for (const file of owned) {
+      const source = fileTexts.get(file);
+      if (source === undefined || !isModuleFile(source) || isInModulesDir(file)) continue;
+      const bucket = collected.get(file) ?? [];
+      bucket.push({
+        severity: DiagnosticSeverity.Hint,
+        range: Range.create(0, 0, 0, Math.max(1, (source.split(/\r?\n/)[0] ?? "").length)),
+        message:
+          `This file defines a module but is not inside a \`modules\` directory. ` +
+          `It resolves correctly either way — moving module files under \`modules/\` ` +
+          `just keeps the layout predictable across a project.\n` +
+          `(Convention hint from Nite Compact. Disable with \`niteCompact.suggestModulesDir\`.)`,
+        source: "nite-compact",
+        tags: [DiagnosticTag.Unnecessary],
+      });
+      collected.set(file, bucket);
     }
   }
 
@@ -362,14 +394,33 @@ connection.onNotification("niteCompact/checkFile", (uri: string) => {
  * buffer (so unsaved edits are honoured) over the copy on disk.
  */
 function readImported(fromReal: string, spec: string): string | null {
-  const target = resolveImport(fromReal, spec);
-  const open = documents.all().find((d) => realPathOf(d) === target);
-  if (open) return open.getText();
-  try {
-    return fs.readFileSync(target, "utf8");
-  } catch {
-    return null;
+  const target = resolveImportTarget(fromReal, spec);
+  if (!target) return null;
+  return readFilePreferBuffer(target);
+}
+
+/**
+ * Resolve an import specifier to a file, handling both forms: a quoted
+ * relative path, and a bare module name that must be searched for because it
+ * carries no location. Returns null when nothing matches.
+ */
+function resolveImportTarget(fromReal: string, spec: string): string | null {
+  // A quoted path always contains a separator or a leading dot in practice;
+  // a bare module name is a plain identifier.
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(spec)) {
+    const target = resolveImport(fromReal, spec);
+    return fs.existsSync(target) ? target : null;
   }
+  return resolveModuleName(fromReal, spec, workspaceCompactFiles(), (f) => readFilePreferBuffer(f));
+}
+
+/** Every .compact file the server knows about, for bare-name resolution. */
+function workspaceCompactFiles(): string[] {
+  const files = new Set<string>(shadow ? shadow.listWorkspaceFiles() : []);
+  for (const doc of documents.all()) {
+    if (doc.uri.endsWith(".compact")) files.add(realPathOf(doc));
+  }
+  return [...files];
 }
 
 /**
@@ -652,9 +703,9 @@ connection.onHover((params): Hover | null => {
 
   // Hovering the import path itself: say where it resolves and what it offers.
   const importRef = importRefAt(text, params.position.line, params.position.character);
-  if (importRef) {
-    const target = resolveImport(realPathOf(doc), importRef.spec);
-    if (!fs.existsSync(target)) {
+  if (importRef && !importRef.builtin) {
+    const target = resolveImportTarget(realPathOf(doc), importRef.spec);
+    if (!target) {
       return {
         contents: {
           kind: MarkupKind.Markdown,
@@ -772,7 +823,8 @@ function resolveDeclaration(doc: TextDocument, text: string, word: string, nearL
 /** Absolute path of a resolved declaration: the import target, or this file. */
 function declarationPath(doc: TextDocument, resolved: ResolvedSymbol): string {
   const thisReal = realPathOf(doc);
-  return resolved.spec ? resolveImport(thisReal, resolved.spec) : thisReal;
+  if (!resolved.spec) return thisReal;
+  return resolveImportTarget(thisReal, resolved.spec) ?? thisReal;
 }
 
 /**
@@ -807,8 +859,9 @@ connection.onDocumentLinks((params): DocumentLink[] => {
   const thisReal = realPathOf(doc);
   const links: DocumentLink[] = [];
   for (const ref of scanImportRefs(doc.getText())) {
-    const target = resolveImport(thisReal, ref.spec);
-    if (!fs.existsSync(target)) continue;
+    if (ref.builtin) continue;
+    const target = resolveImportTarget(thisReal, ref.spec);
+    if (!target) continue;
     links.push({
       range: Range.create(ref.line, ref.startChar, ref.line, ref.endChar),
       target: URI.file(target).toString(),
@@ -826,8 +879,9 @@ connection.onDefinition((params): Location | null => {
   // On an import specifier, jump to the top of the imported file.
   const ref = importRefAt(text, params.position.line, params.position.character);
   if (ref) {
-    const target = resolveImport(realPathOf(doc), ref.spec);
-    if (!fs.existsSync(target)) return null;
+    if (ref.builtin) return null;
+    const target = resolveImportTarget(realPathOf(doc), ref.spec);
+    if (!target) return null;
     return { uri: URI.file(target).toString(), range: Range.create(0, 0, 0, 0) };
   }
 
