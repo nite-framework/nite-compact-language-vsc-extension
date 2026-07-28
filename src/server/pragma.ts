@@ -16,6 +16,11 @@ export function hasLanguagePragma(source: string): boolean {
   return /^[ \t]*pragma\s+language_version\b/m.test(source);
 }
 
+/** True when the file imports the Compact standard library. */
+export function hasStandardLibraryImport(source: string): boolean {
+  return /^[ \t]*import\s+CompactStandardLibrary\s*;/m.test(source);
+}
+
 /**
  * True when the file is a module definition rather than an entry contract.
  *

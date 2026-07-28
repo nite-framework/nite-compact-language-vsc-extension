@@ -47,7 +47,7 @@ import {
 } from "./symbols";
 import { KEYWORDS, LEDGER_ADTS, PRIMITIVE_TYPES, STDLIB } from "./stdlib";
 import { AdtMethod, findLedgerType, methodsForType, resolveAdt, specialize } from "./ledger-adts";
-import { hasLanguagePragma, isModuleFile } from "./pragma";
+import { hasLanguagePragma, hasStandardLibraryImport, isModuleFile } from "./pragma";
 import { spawnSync } from "child_process";
 import * as os from "os";
 import * as crypto from "crypto";
@@ -201,6 +201,21 @@ async function runCheck(doc: TextDocument): Promise<void> {
 
   const collected = new Map<string, Diagnostic[]>();
   for (const file of owned) collected.set(file, []);
+
+  // Every Compact source file, including a module, must explicitly import the
+  // standard library. The compiler does not currently report its absence.
+  for (const file of owned) {
+    const source = fileTexts.get(file);
+    if (source === undefined || hasStandardLibraryImport(source)) continue;
+    const bucket = collected.get(file) ?? [];
+    bucket.push({
+      severity: DiagnosticSeverity.Error,
+      range: Range.create(0, 0, 0, Math.max(1, (source.split(/\r?\n/)[0] ?? "").length)),
+      message: "Missing required import: `import CompactStandardLibrary;`",
+      source: "nite-compact",
+    });
+    collected.set(file, bucket);
+  }
 
   for (const root of roots) {
     if (generation !== compileGeneration) return; // superseded

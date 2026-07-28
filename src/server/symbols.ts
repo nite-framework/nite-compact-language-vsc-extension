@@ -168,9 +168,9 @@ export function extractSymbols(text: string): CompactSymbol[] {
         currentModule = name;
         moduleBraceDepth = depth;
       }
-      if (kind === "circuit" || kind === "pure-circuit" || kind === "witness") {
+      if (kind === "circuit" || kind === "pure-circuit" || kind === "witness" || kind === "constructor") {
         currentCircuit = name;
-        // Parameters are scoped to this circuit; record them too.
+        // Parameters are scoped to this callable; record them too.
         for (const param of extractParameters(noComment)) {
           symbols.push({ ...param, line: i, container: currentModule, scope: name });
         }

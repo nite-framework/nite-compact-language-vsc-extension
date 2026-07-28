@@ -20,7 +20,7 @@ const {
 const { CompileHandle, probeCompactCli } = await import(url.pathToFileURL(out("compiler.js")));
 const { parseCompilerOutput, underlineEnd, explainDiagnostic } = await import(url.pathToFileURL(out("diagnostics.js")));
 const { extractSymbols, extractPrefixedImports, resolveSymbolAt, docCommentAbove } = await import(url.pathToFileURL(out("symbols.js")));
-const { hasLanguagePragma, isModuleFile } = await import(url.pathToFileURL(out("pragma.js")));
+const { hasLanguagePragma, hasStandardLibraryImport, isModuleFile } = await import(url.pathToFileURL(out("pragma.js")));
 const {
   LEDGER_ADTS: LEDGER_ADT_TABLE,
   findLedgerType,
@@ -777,6 +777,24 @@ console.log("6i. module files are exempt from the pragma warning");
   });
   check("an empty or comment-only file is not treated as a module", () => {
     assert.equal(isModuleFile("// nothing here\n"), false);
+  });
+}
+
+console.log("6j. required standard-library import and constructor parameters");
+{
+  check("detects the required standard-library import", () => {
+    assert.equal(hasStandardLibraryImport("import CompactStandardLibrary;\n"), true);
+    assert.equal(hasStandardLibraryImport("module M { }\n"), false);
+    assert.equal(hasStandardLibraryImport("// import CompactStandardLibrary;\nmodule M { }\n"), false);
+  });
+  check("constructor parameters are available for hover", () => {
+    const symbols = extractSymbols("constructor(owner: Bytes<32>, amount: Uint<64>) {\n}\n");
+    const owner = symbols.find((s) => s.kind === "parameter" && s.name === "owner");
+    const amount = symbols.find((s) => s.kind === "parameter" && s.name === "amount");
+    assert.equal(owner?.type, "Bytes<32>");
+    assert.equal(owner?.scope, "constructor");
+    assert.equal(amount?.type, "Uint<64>");
+    assert.equal(amount?.scope, "constructor");
   });
 }
 
