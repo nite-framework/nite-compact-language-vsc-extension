@@ -95,7 +95,8 @@ connection.onInitialize((params: InitializeParams): InitializeResult => {
   return {
     capabilities: {
       textDocumentSync: TextDocumentSyncKind.Incremental,
-      completionProvider: { triggerCharacters: ["_", "."] },
+      // `{` opens a struct literal, where the fields are what you want next.
+      completionProvider: { triggerCharacters: ["_", ".", "{"] },
       documentSymbolProvider: true,
       documentFormattingProvider: true,
       hoverProvider: true,
@@ -474,6 +475,38 @@ function adtCompletionItems(typeText: string): CompletionItem[] {
   });
 }
 
+/**
+ * The struct declaration named by `typeText`, when it names one. Generic
+ * arguments are stripped first, so `Maybe<Account>` is looked up as `Maybe`.
+ * Resolution goes through `resolveDeclaration`, so imported structs work too.
+ */
+function structNamed(
+  doc: TextDocument,
+  text: string,
+  typeText: string,
+  nearLine: number,
+): CompactSymbol | null {
+  const bare = typeText.replace(/<[\s\S]*$/, "").trim();
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(bare)) return null;
+  const resolved = resolveDeclaration(doc, text, bare, nearLine);
+  return resolved && resolved.symbol.kind === "struct" ? resolved.symbol : null;
+}
+
+/** Completion items for a struct's fields, skipping any already supplied. */
+function structFieldItems(sym: CompactSymbol, exclude?: Set<string>): CompletionItem[] {
+  return (sym.fields ?? [])
+    .filter((f) => !exclude?.has(f.name))
+    .map((f, index) => ({
+      label: f.name,
+      kind: CompletionItemKind.Field,
+      detail: `${f.name}: ${f.type}`,
+      documentation: { kind: MarkupKind.Markdown, value: `Field of \`${sym.name}\`.` },
+      // Declaration order beats the client's alphabetical default: a struct's
+      // fields read as a shape, and shuffling them obscures it.
+      sortText: `0_${String(index).padStart(3, "0")}`,
+    }));
+}
+
 connection.onCompletion((params): CompletionItem[] => {
   const doc = documents.get(params.textDocument.uri);
   if (!doc) return [];
@@ -487,8 +520,33 @@ connection.onCompletion((params): CompletionItem[] => {
   if (memberAccess) {
     const declaredType = ledgerTypeOf(doc, doc.getText(), memberAccess[1]);
     if (declaredType) return adtCompletionItems(declaredType);
+
+    // Not a ledger field. A local, parameter, or imported value whose declared
+    // type names a struct offers that struct's fields instead.
+    const source = doc.getText();
+    const receiver = resolveDeclaration(doc, source, memberAccess[1], params.position.line);
+    if (receiver?.symbol.type) {
+      const struct = structNamed(doc, source, receiver.symbol.type, params.position.line);
+      if (struct) return structFieldItems(struct);
+    }
     // Unknown receiver: offer nothing rather than a misleading global list.
     return [];
+  }
+
+  // Inside a struct literal `Account { … }`, offer the fields not yet set.
+  // Matched against everything up to the cursor, not just this line, so a
+  // literal spread over several lines still resolves; `[^{}]*` stops the
+  // match at the nearest unclosed brace. A `struct` keyword before the name
+  // means this is the declaration itself, where its own fields are not wanted.
+  const beforeCursor = doc.getText({ start: { line: 0, character: 0 }, end: params.position });
+  const literal = /(?:^|[^A-Za-z0-9_])(struct\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*\{([^{}]*)$/.exec(beforeCursor);
+  if (literal && !literal[1]) {
+    const struct = structNamed(doc, doc.getText(), literal[2], params.position.line);
+    if (struct) {
+      const supplied = new Set([...literal[3].matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*:/g)].map((m) => m[1]));
+      const remaining = structFieldItems(struct, supplied);
+      if (remaining.length > 0) return remaining;
+    }
   }
 
   const items: CompletionItem[] = [];
@@ -690,6 +748,17 @@ function describeSymbol(sym: CompactSymbol, prefixedAs?: string): string {
     sym.container ? `module \`${sym.container}\`` : "",
   ].filter(Boolean).join(", ");
   parts.push(`*${KIND_LABEL[sym.kind]}${where ? ` — ${where}` : ""}*`);
+
+  // A struct is defined by its fields, so show the whole shape rather than
+  // just the `struct Name` line the declaration site gives.
+  if (sym.kind === "struct" && sym.fields) {
+    if (sym.fields.length === 0) {
+      parts.push("", "*No fields.*");
+    } else {
+      const body = sym.fields.map((f) => `  ${f.name}: ${f.type};`).join("\n");
+      parts.push("", "```compact", `struct ${sym.name} {`, body, "}", "```");
+    }
+  }
 
   if (sym.type) {
     parts.push("", `**Type:** \`${sym.type}\``);

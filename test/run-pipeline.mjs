@@ -187,6 +187,62 @@ console.log("2. symbols + imports");
   });
 }
 
+console.log("2b. struct fields");
+{
+  const goodText = fs.readFileSync(path.join(fixtures, "good.compact"), "utf8");
+  const structOf = (text, name) => extractSymbols(text).find((s) => s.name === name && s.kind === "struct");
+
+  check("semicolon-separated fields are parsed", () => {
+    const account = structOf(goodText, "Account");
+    assert.deepEqual(account?.fields, [
+      { name: "owner", type: "Bytes<32>" },
+      { name: "balance", type: "Uint<64>" },
+    ]);
+  });
+
+  check("comma separators and nested generics survive", () => {
+    const snapshot = structOf(goodText, "Snapshot");
+    assert.deepEqual(snapshot?.fields, [
+      { name: "slots", type: "Vector<3, Uint<64>>" },
+      { name: "tag", type: "Bytes<32>" },
+    ]);
+  });
+
+  check("trailing separator does not yield an empty field", () => {
+    const text = "struct T {\n  a: Uint<8>;\n  b: Boolean;\n}\n";
+    assert.deepEqual(structOf(text, "T")?.fields, [
+      { name: "a", type: "Uint<8>" },
+      { name: "b", type: "Boolean" },
+    ]);
+  });
+
+  check("single-line struct is parsed", () => {
+    assert.deepEqual(structOf("struct P { x: Uint<64>; y: Uint<64>; }", "P")?.fields, [
+      { name: "x", type: "Uint<64>" },
+      { name: "y", type: "Uint<64>" },
+    ]);
+  });
+
+  check("comments inside the body are ignored", () => {
+    const text = "struct C {\n  // the owner\n  owner: Bytes<32>;\n  amount: Uint<64>; // how much\n}\n";
+    assert.deepEqual(structOf(text, "C")?.fields, [
+      { name: "owner", type: "Bytes<32>" },
+      { name: "amount", type: "Uint<64>" },
+    ]);
+  });
+
+  check("fieldless struct yields an empty list, not undefined", () => {
+    assert.deepEqual(structOf("struct Empty {}", "Empty")?.fields, []);
+  });
+
+  check("struct parsing does not disturb neighbouring symbols", () => {
+    const syms = extractSymbols(goodText);
+    assert.ok(syms.some((s) => s.name === "count" && s.kind === "ledger"));
+    assert.ok(syms.some((s) => s.name === "increment" && s.kind === "circuit"));
+    assert.ok(syms.some((s) => s.name === "balanceOf" && s.kind === "circuit"));
+  });
+}
+
 console.log("3. import graph roots");
 {
   const good = path.join(fixtures, "good.compact");

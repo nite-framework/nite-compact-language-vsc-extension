@@ -1,5 +1,6 @@
 pragma language_version 0.23.0;
 import CompactStandardLibrary;
+
 import "./modules/Math" prefix Math_;
 // A module OUTSIDE any `modules` directory, imported by bare NAME rather than
 // path — Compact allows both forms, and both must resolve.
@@ -10,6 +11,15 @@ import "./modules/Store" prefix Store_;
 export struct Account {
     owner: Bytes<32>;
     balance: Uint<64>;
+}
+
+/**
+ * Comma-separated fields with no trailing separator, and a nested generic whose
+ * inner comma must not split the field list. Both separators are legal.
+ */
+export struct Snapshot {
+    slots: Vector<3, Uint<64>>,
+    tag: Bytes<32>
 }
 
 /** Plain typed ledger field — a cell: read() / write() / resetToDefault(). */

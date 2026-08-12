@@ -16,6 +16,13 @@ export type CompactSymbolKind =
   | "const"
   | "parameter";
 
+/** One `name: Type` member of a struct declaration. */
+export interface StructField {
+  name: string;
+  /** Declared type, verbatim, with runs of whitespace collapsed. */
+  type: string;
+}
+
 export interface CompactSymbol {
   name: string;
   kind: CompactSymbolKind;
@@ -41,6 +48,72 @@ export interface CompactSymbol {
    * comment markers stripped. Undefined when there is none.
    */
   doc?: string;
+  /**
+   * Fields of a `struct`, in declaration order. Present only for kind
+   * "struct"; an empty array means the struct really declares no fields.
+   */
+  fields?: StructField[];
+}
+
+/**
+ * Split a struct body on top-level `;` or `,`.
+ *
+ * Both separators are legal and a trailing one is optional (verified against
+ * compiler 0.31.1). Splitting is depth-aware so a generic argument list such as
+ * `Vector<3, Uint<64>>` is not torn apart at its inner comma.
+ */
+function splitFieldList(body: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const ch of body) {
+    if (ch === "<" || ch === "(" || ch === "[") depth++;
+    else if (ch === ">" || ch === ")" || ch === "]") depth--;
+    else if ((ch === ";" || ch === ",") && depth === 0) {
+      parts.push(current);
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  parts.push(current);
+  return parts.map((p) => p.trim()).filter((p) => p.length > 0);
+}
+
+/**
+ * Read the fields of the struct whose declaration starts at `declLine`.
+ *
+ * The body may span any number of lines, so this scans forward from the
+ * declaration to the brace that closes it rather than working line by line.
+ */
+export function extractStructFields(lines: string[], declLine: number): StructField[] {
+  const source = lines
+    .slice(declLine)
+    .map((l) => l.replace(/\/\/.*$/, ""))
+    .join("\n");
+
+  const open = source.indexOf("{");
+  if (open === -1) return [];
+  let depth = 0;
+  let close = -1;
+  for (let i = open; i < source.length; i++) {
+    if (source[i] === "{") depth++;
+    else if (source[i] === "}") {
+      depth--;
+      if (depth === 0) {
+        close = i;
+        break;
+      }
+    }
+  }
+  if (close === -1) return [];
+
+  const fields: StructField[] = [];
+  for (const part of splitFieldList(source.slice(open + 1, close))) {
+    const m = /^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([\s\S]+)$/.exec(part);
+    if (m) fields.push({ name: m[1], type: m[2].replace(/\s+/g, " ").trim() });
+  }
+  return fields;
 }
 
 /**
@@ -186,6 +259,7 @@ export function extractSymbols(text: string): CompactSymbol[] {
         container: kind === "module" ? undefined : currentModule,
         ...(matcher.type ? { type: matcher.type(m) } : {}),
         ...(kind === "const" ? { init: m[4]?.trim().slice(0, 120), scope: currentCircuit } : {}),
+        ...(kind === "struct" ? { fields: extractStructFields(lines, i) } : {}),
         ...(doc ? { doc } : {}),
       });
       break;
